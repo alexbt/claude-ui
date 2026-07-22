@@ -1,0 +1,143 @@
+import fs from "fs";
+import path from "path";
+import os from "os";
+import type { TraceItem } from "@/lib/scanner";
+
+export const dynamic = "force-dynamic";
+
+const POLL_INTERVAL_MS = 1500;
+const MAX_TEXT = 4000;
+
+function toItems(lines: string[]): TraceItem[] {
+  const items: TraceItem[] = [];
+  for (const line of lines) {
+    let entry: any;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const ts = entry?.timestamp ? Date.parse(entry.timestamp) : 0;
+    const content = entry?.message?.content;
+
+    if (entry?.type === "user") {
+      if (typeof content === "string") {
+        items.push({ kind: "user", text: content.slice(0, MAX_TEXT), ts });
+      } else if (Array.isArray(content)) {
+        for (const c of content) {
+          if (c?.type === "text" && c.text?.trim()) {
+            items.push({ kind: "user", text: c.text.slice(0, MAX_TEXT), ts });
+          } else if (c?.type === "tool_result") {
+            const raw =
+              typeof c.content === "string"
+                ? c.content
+                : Array.isArray(c.content)
+                  ? c.content.map((p: any) => p?.text ?? "").join(" ")
+                  : "";
+            const text = raw.replace(/\s+/g, " ").trim();
+            if (text) {
+              items.push({ kind: "tool_result", text: text.slice(0, 600), ts });
+            }
+          }
+        }
+      }
+    } else if (entry?.type === "assistant" && Array.isArray(content)) {
+      for (const c of content) {
+        if (c?.type === "text" && c.text?.trim()) {
+          items.push({ kind: "assistant", text: c.text.slice(0, MAX_TEXT), ts });
+        } else if (c?.type === "tool_use") {
+          let input = "";
+          try {
+            input = JSON.stringify(c.input);
+          } catch {}
+          items.push({
+            kind: "tool",
+            name: c.name,
+            text: input.slice(0, 600),
+            ts,
+          });
+        }
+      }
+    }
+  }
+  return items;
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const project = url.searchParams.get("project") ?? "";
+  const session = url.searchParams.get("session") ?? "";
+  if (!/^[\w-]+$/.test(project) || !/^[\w-]+$/.test(session)) {
+    return new Response("bad request", { status: 400 });
+  }
+
+  const filePath = path.join(
+    os.homedir(),
+    ".claude",
+    "projects",
+    project,
+    `${session}.jsonl`
+  );
+  if (!fs.existsSync(filePath)) {
+    return new Response("not found", { status: 404 });
+  }
+
+  const encoder = new TextEncoder();
+  let interval: ReturnType<typeof setInterval> | null = null;
+  let offset = 0;
+
+  // Read newly appended complete lines since the last offset.
+  const readNewLines = (): string[] => {
+    const size = fs.statSync(filePath).size;
+    if (size <= offset) return [];
+    const fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(size - offset);
+    const read = fs.readSync(fd, buf, 0, buf.length, offset);
+    fs.closeSync(fd);
+    const text = buf.toString("utf8", 0, read);
+    const lastNewline = text.lastIndexOf("\n");
+    if (lastNewline === -1) return []; // no complete line yet
+    offset += Buffer.byteLength(text.slice(0, lastNewline + 1), "utf8");
+    return text.slice(0, lastNewline).split("\n");
+  };
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const cleanup = () => {
+        if (interval) clearInterval(interval);
+        interval = null;
+        try {
+          controller.close();
+        } catch {}
+      };
+
+      const push = () => {
+        try {
+          const items = toItems(readNewLines());
+          if (items.length === 0) return;
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(items)}\n\n`)
+          );
+        } catch {
+          cleanup();
+        }
+      };
+
+      push(); // full history on connect
+      interval = setInterval(push, POLL_INTERVAL_MS);
+      request.signal.addEventListener("abort", cleanup);
+    },
+    cancel() {
+      if (interval) clearInterval(interval);
+      interval = null;
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
+  });
+}
