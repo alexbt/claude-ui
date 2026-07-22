@@ -6,9 +6,11 @@ import type { TraceItem } from "@/lib/scanner";
 export default function SessionTrace({
   project,
   sessionId,
+  provider = "claude",
 }: {
   project: string;
   sessionId: string;
+  provider?: "claude" | "codex";
 }) {
   const [items, setItems] = useState<TraceItem[]>([]);
   const [failed, setFailed] = useState(false);
@@ -20,14 +22,16 @@ export default function SessionTrace({
     setFailed(false);
     followRef.current = true;
     const es = new EventSource(
-      `/api/trace?project=${encodeURIComponent(project)}&session=${encodeURIComponent(sessionId)}`
+      provider === "codex"
+        ? `/api/trace?provider=codex&session=${encodeURIComponent(sessionId)}`
+        : `/api/trace?project=${encodeURIComponent(project)}&session=${encodeURIComponent(sessionId)}`
     );
     es.onmessage = (e) => setItems((prev) => [...prev, ...JSON.parse(e.data)]);
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED) setFailed(true);
     };
     return () => es.close();
-  }, [project, sessionId]);
+  }, [project, sessionId, provider]);
 
   useEffect(() => {
     const el = boxRef.current;

@@ -49,6 +49,33 @@ body {
   margin-bottom: 12px;
 }
 
+.nav-group {
+  margin-bottom: 14px;
+}
+
+.nav-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gray);
+  padding: 6px 10px 4px;
+}
+
+.provider-tag {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
 .nav-item {
   display: flex;
   align-items: center;

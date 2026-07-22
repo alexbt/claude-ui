@@ -3,13 +3,16 @@
 import { useEffect, useState } from "react";
 import type { Snapshot } from "@/lib/scanner";
 
-export function useSnapshot(tickMs = 10_000) {
+export type Provider = "claude" | "codex";
+
+export function useSnapshot(tickMs = 10_000, provider: Provider = "claude") {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [connected, setConnected] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const es = new EventSource("/api/stream");
+    setSnapshot(null);
+    const es = new EventSource(`/api/stream?provider=${provider}`);
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
     es.onmessage = (e) => setSnapshot(JSON.parse(e.data));
@@ -18,7 +21,7 @@ export function useSnapshot(tickMs = 10_000) {
       es.close();
       clearInterval(tick);
     };
-  }, [tickMs]);
+  }, [tickMs, provider]);
 
   return { snapshot, connected, now };
 }

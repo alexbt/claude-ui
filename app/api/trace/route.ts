@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import type { TraceItem } from "@/lib/scanner";
+import { codexSessionPath, codexLinesToItems } from "@/lib/codex";
 
 export const dynamic = "force-dynamic";
 
@@ -65,22 +66,34 @@ function toItems(lines: string[]): TraceItem[] {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const project = url.searchParams.get("project") ?? "";
+  const provider = url.searchParams.get("provider") === "codex" ? "codex" : "claude";
   const session = url.searchParams.get("session") ?? "";
-  if (!/^[\w-]+$/.test(project) || !/^[\w-]+$/.test(session)) {
+  if (!/^[\w-]+$/.test(session)) {
     return new Response("bad request", { status: 400 });
   }
 
-  const filePath = path.join(
-    os.homedir(),
-    ".claude",
-    "projects",
-    project,
-    `${session}.jsonl`
-  );
+  let filePath: string;
+  if (provider === "codex") {
+    const found = codexSessionPath(session);
+    if (!found) return new Response("not found", { status: 404 });
+    filePath = found;
+  } else {
+    const project = url.searchParams.get("project") ?? "";
+    if (!/^[\w-]+$/.test(project)) {
+      return new Response("bad request", { status: 400 });
+    }
+    filePath = path.join(
+      os.homedir(),
+      ".claude",
+      "projects",
+      project,
+      `${session}.jsonl`
+    );
+  }
   if (!fs.existsSync(filePath)) {
     return new Response("not found", { status: 404 });
   }
+  const parseLines = provider === "codex" ? codexLinesToItems : toItems;
 
   const encoder = new TextEncoder();
   let interval: ReturnType<typeof setInterval> | null = null;
@@ -113,7 +126,7 @@ export async function GET(request: Request) {
 
       const push = () => {
         try {
-          const items = toItems(readNewLines());
+          const items = parseLines(readNewLines());
           if (items.length === 0) return;
           controller.enqueue(
             encoder.encode(`data: ${JSON.stringify(items)}\n\n`)

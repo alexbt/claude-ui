@@ -1,10 +1,16 @@
 import { scanCached } from "@/lib/scanner";
+import { scanCodexCached } from "@/lib/codex";
 
 export const dynamic = "force-dynamic";
 
 const POLL_INTERVAL_MS = 2000;
 
 export async function GET(request: Request) {
+  const provider =
+    new URL(request.url).searchParams.get("provider") === "codex"
+      ? "codex"
+      : "claude";
+  const scanFn = provider === "codex" ? scanCodexCached : scanCached;
   const encoder = new TextEncoder();
   let interval: ReturnType<typeof setInterval> | null = null;
 
@@ -14,7 +20,7 @@ export async function GET(request: Request) {
 
       const push = () => {
         try {
-          const snapshot = scanCached();
+          const snapshot = scanFn();
           // Dedupe on the projects tree only — generatedAt changes every scan
           // and would defeat the check. Activity flags live inside projects,
           // so idle transitions still get through.
